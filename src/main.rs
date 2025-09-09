@@ -14,7 +14,7 @@ fn main() {
                 println!("accepted new connection");
                 
                 // Send hardcoded "7" back to the client
-                stream.write_all(b"7").unwrap();
+                stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 7]).unwrap();
                 stream.flush().unwrap();
             }
             Err(e) => {
