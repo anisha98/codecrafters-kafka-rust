@@ -16,17 +16,28 @@ fn main() {
                 let mut buffer = [0u8; 1024];
                 match stream.read(&mut buffer) {
                     Ok(bytes_read) => {
-                        println!("Read {} bytes", bytes_read);
                         let received_data = &buffer[..bytes_read];
-                        println!("Received bytes: {:?}", received_data);
-                        
-                        // Convert to hex for easier reading
-                        let hex_string: String = received_data.iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<Vec<String>>()
-                            .join(" ");
-                        println!("Hex: {}", &hex_string[0 .. 11]);
-                        println!("Hex: {}", &hex_string[24 .. 36]);
+        
+        // Extract correlation ID from bytes 8-11 (after length, api_key, api_version)
+        if bytes_read >= 12 {
+            let correlation_id = [
+                received_data[8],   // 6f
+                received_data[9],   // 7f  
+                received_data[10],  // c6
+                received_data[11],  // 61
+            ];
+            
+            // Build response with extracted correlation ID
+            let response = [
+                0x00, 0x00, 0x00, 0x00,  // message_size
+                correlation_id[0],        // correlation_id[0]
+                correlation_id[1],        // correlation_id[1] 
+                correlation_id[2],        // correlation_id[2]
+                correlation_id[3],        // correlation_id[3]
+            ];
+            
+            stream.write_all(&response).unwrap();
+        }
                     }
                     Err(e) => println!("Failed to read: {}", e),
                 }
