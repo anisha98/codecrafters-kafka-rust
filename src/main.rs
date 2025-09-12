@@ -23,22 +23,53 @@ fn main() {
         
                         // Extract correlation ID from bytes 8-11 (after length, api_key, api_version)
                         if bytes_read >= 12 {
+                            // Correlation ID is at bytes 8-11 in the request
                             let correlation_id = [
-                                received_data[8],   // 6f
-                                received_data[9],   // 7f  
-                                received_data[10],  // c6
-                                received_data[11],  // 61
+                                received_data[8],   
+                                received_data[9],
+                                received_data[10],   
+                                received_data[11],  
                             ];
                             
-                            // Build response with extracted correlation ID
-                            let response = [
-                                0x00, 0x00, 0x00, 0x00,  // message_size
-                                correlation_id[0],        // correlation_id[0]
-                                correlation_id[1],        // correlation_id[1] 
-                                correlation_id[2],        // correlation_id[2]
-                                correlation_id[3],        // correlation_id[3]
-                                0x00, 0x23
+                            // Build proper APIVersions response matching expected format
+                            let mut response = Vec::new();
+                            
+                            // Message length (will be calculated and prepended)
+                            let response_body = [
+                                // Correlation ID (4 bytes)
+                                correlation_id[0], correlation_id[1], correlation_id[2], correlation_id[3],
+                                // Error code (2 bytes) - 0 for success
+                                0x00, 0x00,
+                                // Array length + 1 (compact array format) - 3 entries + 1 = 4
+                                0x04,
+                                // --- First element (API Key 17) ---
+                                0x00, 0x11,  // API key 17 (2 bytes)
+                                0x00, 0x00,  // Min version 0 (2 bytes)
+                                0x00, 0x04,  // Max version 4 (2 bytes)
+                                0x00,        // Tag buffer
+                                // --- Second element (API Key 18) ---
+                                0x00, 0x12,  // API key 18 (2 bytes)
+                                0x00, 0x00,  // Min version 0 (2 bytes)
+                                0x00, 0x04,  // Max version 4 (2 bytes)
+                                0x00,        // Tag buffer
+                                // --- Third element (API Key 19) ---
+                                0x00, 0x13,  // API key 19 (2 bytes)
+                                0x00, 0x00,  // Min version 0 (2 bytes)
+                                0x00, 0x04,  // Max version 4 (2 bytes)
+                                0x00,        // Tag buffer
+                                // Throttle time (4 bytes) - 0
+                                0x00, 0x00, 0x00, 0x00,
+                                // Final tag buffer
+                                0x00,
                             ];
+                            
+                            // Calculate message length (response body length)
+                            let message_length = response_body.len() as u32;
+                            let length_bytes = message_length.to_be_bytes();
+                            
+                            // Prepend message length
+                            response.extend_from_slice(&length_bytes);
+                            response.extend_from_slice(&response_body);
                             
                             stream.write_all(&response).unwrap();
                         }
