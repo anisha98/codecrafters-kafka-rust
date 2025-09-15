@@ -1,110 +1,227 @@
-#![allow(unused_imports)]
-use std::net::TcpListener;
-use std::io::{Write, Read};
+use std::{
+    io::{Cursor, Read, Write},
+    net::{TcpListener, TcpStream},
+};
+use thiserror::Error;
+
+mod readers;
+use readers::*;
+
+// ### ERRORS ### //
+const UNKNOWN_SERVER_ERROR: i16 = -1;
+const NONE: i16 = 0;
+const CORRUPT_MESSAGE: i16 = 2;
+const UNSUPPORTED_VERSION: i16 = 35;
+const INVALID_REQUEST: i16 = 42;
+
+#[derive(Debug, Error)]
+pub enum KafkaError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Invalid message length: {0}")]
+    InvalidMessageLength(i32),
+    #[error("Unsupported API version: {0}")]
+    UnsupportedApiVersion(i16),
+    #[error("Invalid string data: {0}")]
+    InvalidString(#[from] std::string::FromUtf8Error),
+    #[error("Invalid string length: {0}")]
+    InvalidStringLength(i16),
+    #[error("Unsupported API key: {0}")]
+    UnsupportedApiKey(i16),
+}
+
+impl KafkaError {
+    pub fn to_error_code(&self) -> i16 {
+        match self {
+            KafkaError::Io(_) => UNKNOWN_SERVER_ERROR,
+            KafkaError::UnsupportedApiKey(_) => INVALID_REQUEST,
+            KafkaError::InvalidMessageLength(_) => CORRUPT_MESSAGE,
+            KafkaError::InvalidString(_) => CORRUPT_MESSAGE,
+            KafkaError::InvalidStringLength(_) => CORRUPT_MESSAGE,
+            KafkaError::UnsupportedApiVersion(_) => UNSUPPORTED_VERSION,
+        }
+    }
+}
+
+// ### CONSTANTS ### //
+const API_VERS_INFO: &[ApiKeyVerInfo] = &[
+    ApiKeyVerInfo { id: 17, min: 0, max: 4 },
+    ApiKeyVerInfo { id: 18, min: 0, max: 4 },
+    ApiKeyVerInfo { id: 19, min: 0, max: 4 },
+];
+const TAG_BUFFER: &[u8] = &[0];
+
+struct KafkaRequestHeader {
+    api_key: i16,
+    api_ver: i16,
+    correlation_id: i32,
+    _client_id: Option<String>,
+}
+
+impl KafkaRequestHeader {
+    pub fn parse(buffer: &[u8]) -> Result<Self, KafkaError> {
+        let mut cursor = Cursor::new(buffer);
+        let api_key = read_int16(&mut cursor)?;
+        let api_ver = read_int16(&mut cursor)?;
+        let correlation_id = read_int32(&mut cursor)?;
+        let _client_id = read_nullable_string(&mut cursor)?;
+
+        Ok(KafkaRequestHeader {
+            api_key,
+            api_ver,
+            correlation_id,
+            _client_id,
+        })
+    }
+}
+
+enum KafkaResponse {
+    ApiVersions(ApiVersionsResponse),
+    Error(ErrorResponse),
+}
+
+struct ApiVersionsResponse {
+    pub correlation_id: i32,
+    pub api_key_versions: &'static [ApiKeyVerInfo],
+}
+
+struct ApiKeyVerInfo {
+    pub id: i16,
+    pub min: i16,
+    pub max: i16,
+}
+
+struct ErrorResponse {
+    pub correlation_id: i32,
+    pub error_code: i16,
+}
 
 fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
     
-    let listener = TcpListener::bind("127.0.0.1:9092").unwrap(); //9092 port is typically used for kafka
+    let listener = TcpListener::bind("127.0.0.1:9092").unwrap();
     
-    // FIRST MATCH: "Did we get a connection?"
-    for stream in listener.incoming() { // Iterator of Result<TcpStream, Error>
-        match stream { // ← Matching the connection attempt
-            Ok(mut stream) => { // ← We have a TcpStream!
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
                 println!("accepted new connection");
-
-                // SECOND MATCH: "Did we read data successfully?"
-                let mut buffer = [0u8; 1024];
-                match stream.read(&mut buffer) { 
-                    Ok(bytes_read) => {
-                        let received_data = &buffer[..bytes_read];
-        
-                        // Extract request details from the message
-                        if bytes_read >= 12 {
-                            // Extract API key from bytes 4-5
-                            let api_key = u16::from_be_bytes([received_data[4], received_data[5]]);
-                            // Extract API version from bytes 6-7
-                            let api_version = u16::from_be_bytes([received_data[6], received_data[7]]);
-                            // Correlation ID is at bytes 8-11 in the request
-                            let correlation_id = [
-                                received_data[8],   
-                                received_data[9],
-                                received_data[10],   
-                                received_data[11],  
-                            ];
-                            
-                            // Build APIVersions response dynamically
-                            let mut response = Vec::new();
-                            let mut response_body = Vec::new();
-                            
-                            // Add correlation ID (4 bytes)
-                            response_body.extend_from_slice(&correlation_id);
-                            
-                            // Add error code (2 bytes) - 0 for success
-                            response_body.extend_from_slice(&[0x00, 0x00]);
-                            
-                            // Define supported API versions dynamically
-                            let supported_apis = vec![
-                                (17u16, 0u16, 4u16), // API Key 17: min version 0, max version 4
-                                (18u16, 0u16, 4u16), // API Key 18: min version 0, max version 4
-                                (19u16, 0u16, 4u16), // API Key 19: min version 0, max version 4
-                            ];
-                            
-                            // Check if the requested API key and version are supported
-                            let mut error_code = 35u16; // UNSUPPORTED_VERSION_ERROR by default
-                            for (supported_key, min_ver, max_ver) in &supported_apis {
-                                if api_key == *supported_key && api_version >= *min_ver && api_version <= *max_ver {
-                                    error_code = 0; // Success
-                                    break;
-                                }
-                            }
-                            
-                            // Add error code (2 bytes)
-                            response_body.extend_from_slice(&error_code.to_be_bytes());
-                            
-                            // Add array length + 1 (compact array format)
-                            response_body.push((supported_apis.len() + 1) as u8);
-                            
-                            // Add each API version entry dynamically
-                            for (api_key, min_version, max_version) in supported_apis {
-                                // API key (2 bytes, big endian)
-                                response_body.extend_from_slice(&api_key.to_be_bytes());
-                                // Min version (2 bytes, big endian)
-                                response_body.extend_from_slice(&min_version.to_be_bytes());
-                                // Max version (2 bytes, big endian)
-                                response_body.extend_from_slice(&max_version.to_be_bytes());
-                                // Tag buffer
-                                response_body.push(0x00);
-                            }
-                            
-                            // Add throttle time (4 bytes) - 0
-                            response_body.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
-                            
-                            // Add final tag buffer
-                            response_body.push(0x00);
-                            
-                            // Calculate message length (response body length)
-                            let message_length = response_body.len() as u32;
-                            let length_bytes = message_length.to_be_bytes();
-                            
-                            // Prepend message length
-                            response.extend_from_slice(&length_bytes);
-                            response.extend_from_slice(&response_body);
-                            
-                            stream.write_all(&response).unwrap();
-                        }
-                    }
-                    Err(e) => println!("Failed to read: {}", e),
+                if let Err(e) = handle_connection(stream) {
+                    eprintln!("Error handling connection: {}", e);
                 }
-                
-                // Send hardcoded "7" back to the client
-                // stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 7]).unwrap();
-                // stream.flush().unwrap();
             }
             Err(e) => {
                 println!("error: {}", e);
             }
         }
+    }
+}
+
+pub fn handle_connection(mut stream: TcpStream) -> Result<(), KafkaError> {
+    let request_buffer = read_request(&mut stream)?;
+    let request_header = match KafkaRequestHeader::parse(&request_buffer) {
+        Ok(header) => header,
+        Err(e) => {
+            eprintln!("Error parsing incoming request header: {:?}", e);
+            return Ok(());
+        }
+    };
+
+    let response = match process_request(&request_header, &request_buffer) {
+        Ok(response) => response,
+        Err(e) => KafkaResponse::Error(ErrorResponse {
+            correlation_id: request_header.correlation_id,
+            error_code: e.to_error_code(),
+        }),
+    };
+
+    send_response(&mut stream, &response)?;
+    Ok(())
+}
+
+fn read_request(stream: &mut TcpStream) -> Result<Vec<u8>, KafkaError> {
+    let mut size_buf = [0u8; 4];
+    stream.read_exact(&mut size_buf)?;
+    let size = i32::from_be_bytes(size_buf);
+
+    if size <= 0 || size > 1_000_000 {
+        return Err(KafkaError::InvalidMessageLength(size));
+    }
+
+    let mut buf = vec![0u8; size as usize];
+    stream.read_exact(&mut buf)?;
+
+    Ok(buf)
+}
+
+fn process_request(
+    request_header: &KafkaRequestHeader,
+    _request_buffer: &[u8],
+) -> Result<KafkaResponse, KafkaError> {
+    match request_header.api_key {
+        18 => {
+            if !(0..=4).contains(&request_header.api_ver) {
+                Err(KafkaError::UnsupportedApiVersion(request_header.api_ver))
+            } else {
+                Ok(KafkaResponse::ApiVersions(ApiVersionsResponse {
+                    correlation_id: request_header.correlation_id,
+                    api_key_versions: API_VERS_INFO,
+                }))
+            }
+        }
+        17 | 19 => {
+            if !(0..=4).contains(&request_header.api_ver) {
+                Err(KafkaError::UnsupportedApiVersion(request_header.api_ver))
+            } else {
+                Ok(KafkaResponse::ApiVersions(ApiVersionsResponse {
+                    correlation_id: request_header.correlation_id,
+                    api_key_versions: API_VERS_INFO,
+                }))
+            }
+        }
+        _ => Err(KafkaError::UnsupportedApiKey(request_header.api_key)),
+    }
+}
+
+fn send_response(stream: &mut TcpStream, response: &KafkaResponse) -> Result<(), KafkaError> {
+    let mut res_buf = vec![];
+
+    match response {
+        KafkaResponse::ApiVersions(api_versions) => {
+            res_buf.extend_from_slice(&api_versions.correlation_id.to_be_bytes());
+            res_buf.extend_from_slice(&NONE.to_be_bytes());
+            // [api_keys] len
+            res_buf
+                .extend_from_slice(&(api_versions.api_key_versions.len() as u8 + 1).to_be_bytes());
+            for api_key in api_versions.api_key_versions {
+                res_buf.extend_from_slice(&api_key.id.to_be_bytes());
+                res_buf.extend_from_slice(&api_key.min.to_be_bytes());
+                res_buf.extend_from_slice(&api_key.max.to_be_bytes());
+                res_buf.extend_from_slice(TAG_BUFFER);
+            }
+
+            res_buf.extend_from_slice(&[0u8; 4]); // throttle_time_ms (i32)
+            res_buf.extend_from_slice(TAG_BUFFER);
+        }
+
+        KafkaResponse::Error(err_res) => {
+            res_buf.extend_from_slice(&err_res.correlation_id.to_be_bytes());
+            res_buf.extend_from_slice(&err_res.error_code.to_be_bytes());
+        }
+    };
+
+    write_response_with_len(stream, &res_buf)
+}
+
+fn write_response_with_len(
+    stream: &mut TcpStream,
+    response_buffer: &[u8],
+) -> Result<(), KafkaError> {
+    let size = response_buffer.len() as i32;
+    stream.write_all(&size.to_be_bytes())?;
+    stream.write_all(response_buffer)?;
+
+    match stream.flush() {
+        Ok(_) => Ok(()),
+        Err(e) => Err(KafkaError::Io(e)),
     }
 }
