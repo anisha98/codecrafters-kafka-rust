@@ -1,19 +1,23 @@
-use std::{
-    io::{Read, Write},
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("Logs from your program will appear here!");
     
-    let listener = TcpListener::bind("127.0.0.1:9092").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:9092").await.unwrap();
     
     // Use loop to continuously accept connections
     loop {
-        match listener.accept() {
+        match listener.accept().await {
             Ok((stream, addr)) => {
                 println!("accepted new connection from {:?}", addr);
-                handle_connection(stream);
+                // Spawn async task for each connection (non-blocking)
+                tokio::spawn(async move {
+                    handle_connection(stream).await;
+                });
             }
             Err(e) => {
                 println!("error accepting connection: {}", e);
@@ -22,14 +26,14 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream) {
+async fn handle_connection(mut stream: TcpStream) {
     // Keep connection alive for multiple requests
     loop {
-        match read_request(&mut stream) {
+        match read_request(&mut stream).await {
             Ok((api_key, api_version, correlation_id)) => {
                 println!("received request: api_key={}, api_version={}, correlation_id={}", 
                          api_key, api_version, correlation_id);
-                send_response(&mut stream, api_key, api_version, correlation_id);
+                send_response(&mut stream, api_key, api_version, correlation_id).await;
             }
             Err(_) => {
                 println!("connection closed or error occurred");
@@ -39,15 +43,15 @@ fn handle_connection(mut stream: TcpStream) {
     }
 }
 
-fn read_request(stream: &mut TcpStream) -> Result<(i16, i16, i32), std::io::Error> {
+async fn read_request(stream: &mut TcpStream) -> Result<(i16, i16, i32), std::io::Error> {
     // Read message length
     let mut size_buf = [0u8; 4];
-    stream.read_exact(&mut size_buf)?;
+    stream.read_exact(&mut size_buf).await?;
     let size = i32::from_be_bytes(size_buf);
     
     // Read message content
     let mut buf = vec![0u8; size as usize];
-    stream.read_exact(&mut buf)?;
+    stream.read_exact(&mut buf).await?;
     
     // Parse request header
     let api_key = i16::from_be_bytes([buf[0], buf[1]]);
@@ -57,7 +61,7 @@ fn read_request(stream: &mut TcpStream) -> Result<(i16, i16, i32), std::io::Erro
     Ok((api_key, api_version, correlation_id))
 }
 
-fn send_response(stream: &mut TcpStream, api_key: i16, api_version: i16, correlation_id: i32) {
+async fn send_response(stream: &mut TcpStream, api_key: i16, api_version: i16, correlation_id: i32) {
     // Build response
     let mut response = Vec::new();
     
@@ -105,7 +109,7 @@ fn send_response(stream: &mut TcpStream, api_key: i16, api_version: i16, correla
     
     // Send response with length prefix
     let response_length = response.len() as i32;
-    let _ = stream.write_all(&response_length.to_be_bytes());
-    let _ = stream.write_all(&response);
-    let _ = stream.flush();
+    let _ = stream.write_all(&response_length.to_be_bytes()).await;
+    let _ = stream.write_all(&response).await;
+    let _ = stream.flush().await;
 }
