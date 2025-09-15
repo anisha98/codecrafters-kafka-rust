@@ -41,22 +41,16 @@ fn main() {
                             // Add correlation ID (4 bytes)
                             response_body.extend_from_slice(&correlation_id);
                             
-<<<<<<< HEAD
                             // Add error code (2 bytes) - 0 for success
                             response_body.extend_from_slice(&[0x00, 0x00]);
                             
                             // Define supported API versions dynamically
-=======
-                            // Define supported API versions
->>>>>>> f4748ce (Handle ApiVersions request)
                             let supported_apis = vec![
                                 (17u16, 0u16, 4u16), // API Key 17: min version 0, max version 4
                                 (18u16, 0u16, 4u16), // API Key 18: min version 0, max version 4
                                 (19u16, 0u16, 4u16), // API Key 19: min version 0, max version 4
                             ];
                             
-<<<<<<< HEAD
-=======
                             // Check if the requested API key and version are supported
                             let mut error_code = 35u16; // UNSUPPORTED_VERSION_ERROR by default
                             for (supported_key, min_ver, max_ver) in &supported_apis {
@@ -69,7 +63,6 @@ fn main() {
                             // Add error code (2 bytes)
                             response_body.extend_from_slice(&error_code.to_be_bytes());
                             
->>>>>>> f4748ce (Handle ApiVersions request)
                             // Add array length + 1 (compact array format)
                             response_body.push((supported_apis.len() + 1) as u8);
                             
