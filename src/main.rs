@@ -20,8 +20,12 @@ fn main() {
                     Ok(bytes_read) => {
                         let received_data = &buffer[..bytes_read];
         
-                        // Extract correlation ID from bytes 8-11 (after length, api_key, api_version)
+                        // Extract request details from the message
                         if bytes_read >= 12 {
+                            // Extract API key from bytes 4-5
+                            let api_key = u16::from_be_bytes([received_data[4], received_data[5]]);
+                            // Extract API version from bytes 6-7
+                            let api_version = u16::from_be_bytes([received_data[6], received_data[7]]);
                             // Correlation ID is at bytes 8-11 in the request
                             let correlation_id = [
                                 received_data[8],   
@@ -37,16 +41,35 @@ fn main() {
                             // Add correlation ID (4 bytes)
                             response_body.extend_from_slice(&correlation_id);
                             
+<<<<<<< HEAD
                             // Add error code (2 bytes) - 0 for success
                             response_body.extend_from_slice(&[0x00, 0x00]);
                             
                             // Define supported API versions dynamically
+=======
+                            // Define supported API versions
+>>>>>>> f4748ce (Handle ApiVersions request)
                             let supported_apis = vec![
                                 (17u16, 0u16, 4u16), // API Key 17: min version 0, max version 4
                                 (18u16, 0u16, 4u16), // API Key 18: min version 0, max version 4
                                 (19u16, 0u16, 4u16), // API Key 19: min version 0, max version 4
                             ];
                             
+<<<<<<< HEAD
+=======
+                            // Check if the requested API key and version are supported
+                            let mut error_code = 35u16; // UNSUPPORTED_VERSION_ERROR by default
+                            for (supported_key, min_ver, max_ver) in &supported_apis {
+                                if api_key == *supported_key && api_version >= *min_ver && api_version <= *max_ver {
+                                    error_code = 0; // Success
+                                    break;
+                                }
+                            }
+                            
+                            // Add error code (2 bytes)
+                            response_body.extend_from_slice(&error_code.to_be_bytes());
+                            
+>>>>>>> f4748ce (Handle ApiVersions request)
                             // Add array length + 1 (compact array format)
                             response_body.push((supported_apis.len() + 1) as u8);
                             
