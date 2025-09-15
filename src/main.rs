@@ -19,7 +19,6 @@ fn main() {
                 match stream.read(&mut buffer) { 
                     Ok(bytes_read) => {
                         let received_data = &buffer[..bytes_read];
-                        println!("Message bytes: {:?}", received_data);
         
                         // Extract correlation ID from bytes 8-11 (after length, api_key, api_version)
                         if bytes_read >= 12 {
@@ -31,37 +30,43 @@ fn main() {
                                 received_data[11],  
                             ];
                             
-                            // Build proper APIVersions response matching expected format
+                            // Build APIVersions response dynamically
                             let mut response = Vec::new();
+                            let mut response_body = Vec::new();
                             
-                            // Message length (will be calculated and prepended)
-                            let response_body = [
-                                // Correlation ID (4 bytes)
-                                correlation_id[0], correlation_id[1], correlation_id[2], correlation_id[3],
-                                // Error code (2 bytes) - 0 for success
-                                0x00, 0x00,
-                                // Array length + 1 (compact array format) - 3 entries + 1 = 4
-                                0x04,
-                                // --- First element (API Key 17) ---
-                                0x00, 0x11,  // API key 17 (2 bytes)
-                                0x00, 0x00,  // Min version 0 (2 bytes)
-                                0x00, 0x04,  // Max version 4 (2 bytes)
-                                0x00,        // Tag buffer
-                                // --- Second element (API Key 18) ---
-                                0x00, 0x12,  // API key 18 (2 bytes)
-                                0x00, 0x00,  // Min version 0 (2 bytes)
-                                0x00, 0x04,  // Max version 4 (2 bytes)
-                                0x00,        // Tag buffer
-                                // --- Third element (API Key 19) ---
-                                0x00, 0x13,  // API key 19 (2 bytes)
-                                0x00, 0x00,  // Min version 0 (2 bytes)
-                                0x00, 0x04,  // Max version 4 (2 bytes)
-                                0x00,        // Tag buffer
-                                // Throttle time (4 bytes) - 0
-                                0x00, 0x00, 0x00, 0x00,
-                                // Final tag buffer
-                                0x00,
+                            // Add correlation ID (4 bytes)
+                            response_body.extend_from_slice(&correlation_id);
+                            
+                            // Add error code (2 bytes) - 0 for success
+                            response_body.extend_from_slice(&[0x00, 0x00]);
+                            
+                            // Define supported API versions dynamically
+                            let supported_apis = vec![
+                                (17u16, 0u16, 4u16), // API Key 17: min version 0, max version 4
+                                (18u16, 0u16, 4u16), // API Key 18: min version 0, max version 4
+                                (19u16, 0u16, 4u16), // API Key 19: min version 0, max version 4
                             ];
+                            
+                            // Add array length + 1 (compact array format)
+                            response_body.push((supported_apis.len() + 1) as u8);
+                            
+                            // Add each API version entry dynamically
+                            for (api_key, min_version, max_version) in supported_apis {
+                                // API key (2 bytes, big endian)
+                                response_body.extend_from_slice(&api_key.to_be_bytes());
+                                // Min version (2 bytes, big endian)
+                                response_body.extend_from_slice(&min_version.to_be_bytes());
+                                // Max version (2 bytes, big endian)
+                                response_body.extend_from_slice(&max_version.to_be_bytes());
+                                // Tag buffer
+                                response_body.push(0x00);
+                            }
+                            
+                            // Add throttle time (4 bytes) - 0
+                            response_body.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+                            
+                            // Add final tag buffer
+                            response_body.push(0x00);
                             
                             // Calculate message length (response body length)
                             let message_length = response_body.len() as u32;
