@@ -99,6 +99,12 @@ async fn send_response(stream: &mut TcpStream, api_key: i16, api_version: i16, c
         response.extend_from_slice(&0i16.to_be_bytes());  // Min version
         response.extend_from_slice(&4i16.to_be_bytes());  // Max version
         response.push(0); // Tag buffer
+
+        // API 75
+        response.extend_from_slice(&75i16.to_be_bytes()); // API key
+        response.extend_from_slice(&0i16.to_be_bytes());  // Min version
+        response.extend_from_slice(&0i16.to_be_bytes());  // Max version
+        response.push(0); // Tag buffer
         
         // Throttle time (4 bytes)
         response.extend_from_slice(&0i32.to_be_bytes());
